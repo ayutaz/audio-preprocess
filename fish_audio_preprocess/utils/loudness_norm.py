@@ -1,15 +1,21 @@
 from pathlib import Path
-from typing import Union
+from typing import Union, Tuple
 
 import numpy as np
 import pyloudnorm as pyln
 import soundfile as sf
 from loguru import logger
 import traceback
+import os
 
+def prevent_clipping(audio: np.ndarray, threshold: float = 0.95) -> np.ndarray:
+    max_val = np.max(np.abs(audio))
+    if max_val > threshold:
+        audio = audio * (threshold / max_val)
+    return audio
 
 def loudness_norm(
-        audio: np.ndarray, rate: int, peak=-1.0, loudness=-23.0, block_size=0.400
+    audio: np.ndarray, rate: int, peak: float = -1.0, loudness: float = -23.0, block_size: float = 0.400
 ) -> np.ndarray:
     """
     Perform loudness normalization (ITU-R BS.1770-4) on audio files.
@@ -25,36 +31,45 @@ def loudness_norm(
         loudness normalized audio
     """
 
-    # peak normalize audio to [peak] dB
+    meter = pyln.Meter(rate, block_size=block_size)  # create BS.1770 meter
+    loudness_pre = meter.integrated_loudness(audio)
+
+    audio = pyln.normalize.loudness(audio, loudness_pre, loudness)
     audio = pyln.normalize.peak(audio, peak)
 
-    # measure the loudness first
-    meter = pyln.Meter(rate, block_size=block_size)  # create BS.1770 meter
-    _loudness = meter.integrated_loudness(audio)
+    return audio
 
-    return pyln.normalize.loudness(audio, _loudness, loudness)
-
-
-def loudness_norm_file(input_file, output_file, peak=-1.0, loudness=-23.0, block_size=0.400):
+def loudness_norm_file(input_file: Union[str, Path], output_file: Union[str, Path], peak: float = -1.0, loudness: float = -23.0, min_block_size: float = 0.1) -> Tuple[str, bool]:
     try:
         audio, rate = sf.read(str(input_file))
-        meter = pyln.Meter(rate)
-        loudness_pre = meter.integrated_loudness(audio)
+        logger.info(f"Processing file: {input_file}, Shape: {audio.shape}, Rate: {rate}")
 
-        audio = pyln.normalize.loudness(audio, loudness_pre, loudness)
+        # 最小ブロックサイズの計算（ファイルの長さの10%か0.1秒のいずれか大きい方）
+        min_samples = max(int(min_block_size * rate), int(len(audio) * 0.1))
+        block_size = min(0.400, len(audio) / rate)  # 0.4秒かファイルの長さの短い方
 
-        audio = pyln.normalize.peak(audio, peak)
+        if len(audio) < min_samples:
+            logger.warning(f"Audio file {input_file} is too short (length: {len(audio)}, minimum: {min_samples}). Skipping.")
+            return str(input_file), False  # 処理をスキップしたことを示す
 
-        # ファイルを小さなチャンクに分割して書き込む
-        chunk_size = 100000  # チャンクサイズを調整する必要があるかもしれません
+        audio = loudness_norm(audio, rate, peak, loudness, block_size)
+        logger.info("Loudness normalization applied")
+
+        audio = prevent_clipping(audio)
+        logger.info("Clipping prevention applied")
+
+        chunk_size = 100000
         with sf.SoundFile(output_file, 'w', samplerate=rate,
-                          channels=audio.shape[1] if len(audio.shape) > 1 else 1) as f:
+                        channels=audio.shape[1] if len(audio.shape) > 1 else 1) as f:
             for i in range(0, len(audio), chunk_size):
                 chunk = audio[i:i + chunk_size]
                 f.write(chunk)
+                logger.debug(f"Wrote chunk {i//chunk_size + 1}/{len(audio)//chunk_size + 1}")
+
+        logger.info(f"File written successfully: {output_file}")
+        return str(input_file), True  # 処理が成功したことを示す
 
     except Exception as e:
-        print(f"Error in loudness_norm_file: {str(e)}")
-        print("Traceback:")
-        traceback.print_exc()
-        raise
+        logger.error(f"Error in loudness_norm_file for {input_file}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return str(input_file), False  # エラーが発生したことを示す
