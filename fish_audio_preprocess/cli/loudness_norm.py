@@ -8,7 +8,6 @@ from tqdm import tqdm
 
 from fish_audio_preprocess.utils.file import AUDIO_EXTENSIONS, list_files, make_dirs
 
-
 @click.command()
 @click.argument("input_dir", type=click.Path(exists=True, file_okay=False))
 @click.argument("output_dir", type=click.Path(exists=False, file_okay=False))
@@ -74,6 +73,8 @@ def loudness_norm(
     logger.info(f"Found {len(files)} files, normalizing loudness")
 
     skipped = 0
+    processed = 0
+    errors = 0
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         tasks = []
@@ -96,13 +97,21 @@ def loudness_norm(
                 )
             )
 
-        for i in tqdm(as_completed(tasks), total=len(tasks), desc="Processing"):
-            assert i.exception() is None, i.exception()
+        for future in tqdm(as_completed(tasks), total=len(tasks), desc="Processing"):
+            try:
+                file_path, result = future.result()
+                if result:
+                    processed += 1
+                else:
+                    skipped += 1
+                    logger.warning(f"Skipped or failed to process file: {file_path}")
+            except Exception as e:
+                logger.error(f"Error in task: {str(e)}")
+                errors += 1
 
     logger.info("Done!")
-    logger.info(f"Total: {len(files)}, Skipped: {skipped}")
+    logger.info(f"Total: {len(files)}, Processed: {processed}, Skipped: {skipped}, Errors: {errors}")
     logger.info(f"Output directory: {output_dir}")
-
 
 if __name__ == "__main__":
     loudness_norm()
