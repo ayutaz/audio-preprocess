@@ -42,7 +42,6 @@ def loudness_norm(
 def loudness_norm_file(input_file: Union[str, Path], output_file: Union[str, Path], peak: float = -1.0, loudness: float = -23.0, min_block_size: float = 0.1) -> Tuple[str, bool]:
     try:
         audio, rate = sf.read(str(input_file))
-        logger.info(f"Processing file: {input_file}, Shape: {audio.shape}, Rate: {rate}")
 
         # 最小ブロックサイズの計算（ファイルの長さの10%か0.1秒のいずれか大きい方）
         min_samples = max(int(min_block_size * rate), int(len(audio) * 0.1))
@@ -53,10 +52,8 @@ def loudness_norm_file(input_file: Union[str, Path], output_file: Union[str, Pat
             return str(input_file), False  # 処理をスキップしたことを示す
 
         audio = loudness_norm(audio, rate, peak, loudness, block_size)
-        logger.info("Loudness normalization applied")
 
         audio = prevent_clipping(audio)
-        logger.info("Clipping prevention applied")
 
         chunk_size = 100000
         with sf.SoundFile(output_file, 'w', samplerate=rate,
@@ -64,9 +61,7 @@ def loudness_norm_file(input_file: Union[str, Path], output_file: Union[str, Pat
             for i in range(0, len(audio), chunk_size):
                 chunk = audio[i:i + chunk_size]
                 f.write(chunk)
-                logger.debug(f"Wrote chunk {i//chunk_size + 1}/{len(audio)//chunk_size + 1}")
 
-        logger.info(f"File written successfully: {output_file}")
         return str(input_file), True  # 処理が成功したことを示す
 
     except Exception as e:
